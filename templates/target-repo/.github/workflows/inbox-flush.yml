@@ -1,0 +1,45 @@
+# 개발 대상 저장소(예: space-sandbox1)에 복사해서 쓰는 워크플로.
+# 인박스의 "지금 반영" 버튼이나 정기 일정이 이 워크플로를 깨우고,
+# Claude가 feedback:pending 이슈를 한 번에 읽어 반영한다.
+name: inbox-flush
+
+on:
+  repository_dispatch:
+    types: [inbox-flush]
+  workflow_dispatch:
+  # 정기 반영이 필요하면 주석을 푸세요 (UTC 기준, 2시간마다).
+  # schedule:
+  #   - cron: "0 */2 * * *"
+
+# 반영이 겹치지 않도록 한 번에 하나만 실행한다.
+concurrency:
+  group: inbox-flush
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  flush:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          # 둘 중 하나를 저장소 Secrets에 넣으세요.
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            인박스 피드백 반영 차례다. 저장소의 CLAUDE.md "인박스 규칙"을 따른다.
+            이번에 요청된 이슈 번호(없으면 전체): ${{ toJson(github.event.client_payload.issues) }}
+            1. `feedback:pending` 라벨이 붙은 열린 이슈를 모두 읽는다. 각 이슈의 마지막 `inbox-feedback` 코멘트가 사람의 답이다.
+            2. 답에 따라 작업한다. 코드 변경은 브랜치에서 하고 PR을 연다. main에 직접 푸시하지 않는다.
+            3. 처리한 이슈는 `feedback:pending`을 떼고 `feedback:applied`를 붙인 뒤, 무엇을 했는지 한 줄 코멘트를 남긴다.
+               끝난 카드는 닫고, 사람이 다시 봐야 하면 새 카드를 만든다.
+          claude_args: |
+            --max-turns 40
