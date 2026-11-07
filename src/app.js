@@ -236,7 +236,7 @@ function renderSwitcher() {
   box.replaceChildren();
   const p = currentProject();
   if (!p) {
-    box.append(el('h1', {}, '할 일 인박스'));
+    box.append(el('h1', {}, 'OCHE'));
     return;
   }
   const others = state.settings.projects.filter((x) => x.id !== p.id);
@@ -361,7 +361,7 @@ function section(title, cards, emptyText) {
 function render() {
   renderSwitcher();
   const total = totalTodo(state.statuses);
-  document.title = total > 0 ? `(${total}) 할 일 인박스` : '할 일 인박스';
+  document.title = total > 0 ? `(${total}) OCHE` : 'OCHE';
 
   const main = $('#main');
   main.replaceChildren();
