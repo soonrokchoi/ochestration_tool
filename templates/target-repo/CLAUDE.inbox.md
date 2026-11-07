@@ -21,12 +21,14 @@
   "why": "사람이 봐야 하는 이유 1~2문장",
   "est_minutes": 5,
   "group": "movement-tuning",
+  "pr": 42,
   "links": [{ "label": "PR #42", "url": "https://github.com/..." }],
   "checks": ["확인할 포인트 1", "확인할 포인트 2"],
   "options": []
 }
 ```
 
+- `pr`은 `human:review`에서 검토할 같은 저장소의 PR 번호다. 있으면 OCHE에 머지 버튼이 뜬다. 사람이 머지하면 OCHE가 이슈를 닫는다.
 - `options`는 `human:decide`에서만 쓴다. 고를 수 있는 선택지 2~4개를 문장으로 넣는다.
 - `summary`는 사람이 목록만 보고 할지 말지 정할 수 있게 쓴다.
 

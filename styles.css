@@ -205,3 +205,10 @@ dialog input { font: inherit; padding: 8px; border: 1px solid var(--line); borde
 .menu-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 dialog textarea { font: 13px/1.5 ui-monospace, monospace; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); resize: vertical; }
 code { font-size: 0.92em; }
+
+.pr-box { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0 4px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; }
+.pr-status { margin: 0; flex: 1 1 200px; font-size: 14px; }
+.pr-status a { color: var(--accent); }
+.pr-status.ok { color: var(--build); }
+button.act-merge { background: var(--build); border-color: var(--build); color: var(--surface); }
+button.act-merge.confirm { background: var(--p0); border-color: var(--p0); }

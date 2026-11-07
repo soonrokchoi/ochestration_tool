@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseMeta, toCard, sortCards, actionsFor, feedbackComment, isTodo } from '../src/card.js';
+import { parseMeta, toCard, sortCards, actionsFor, feedbackComment, isTodo, prNumberFor, mergeStatus } from '../src/card.js';
 
 const issue = (over = {}) => ({
   number: 1,
@@ -85,4 +85,25 @@ test('answered items leave the todo list until feedback:applied is removed', () 
   assert.equal(again.answered, false);
   assert.equal(again.pending, true);
   assert.equal(isTodo(toCard(issue({ labels: ['human:decide'] }))), true);
+});
+
+test('prNumberFor reads meta.pr first, then same-repo PR links, only for review items', () => {
+  const fromMeta = toCard(issue({ body: '```inbox\n{"pr":19,"links":[{"url":"https://github.com/o/r/pull/7"}]}\n```' }));
+  assert.equal(prNumberFor(fromMeta, 'o', 'r'), 19);
+  const fromLink = toCard(issue({ body: '```inbox\n{"links":[{"url":"https://github.com/x/y/pull/3"},{"url":"https://github.com/O/R/pull/7/files"}]}\n```' }));
+  assert.equal(prNumberFor(fromLink, 'o', 'r'), 7);
+  const none = toCard(issue({ body: '```inbox\n{"links":[{"url":"https://github.com/x/y/pull/3"}]}\n```' }));
+  assert.equal(prNumberFor(none, 'o', 'r'), null);
+  const test = toCard(issue({ labels: ['human:test'], body: '```inbox\n{"pr":19}\n```' }));
+  assert.equal(prNumberFor(test, 'o', 'r'), null);
+});
+
+test('mergeStatus only allows open, non-draft, clean PRs', () => {
+  assert.equal(mergeStatus({ state: 'open', mergeable_state: 'clean' }).canMerge, true);
+  assert.equal(mergeStatus({ state: 'open', mergeable_state: 'unstable' }).canMerge, false);
+  assert.equal(mergeStatus({ state: 'open', mergeable_state: 'dirty' }).canMerge, false);
+  assert.equal(mergeStatus({ state: 'open', draft: true, mergeable_state: 'clean' }).canMerge, false);
+  assert.equal(mergeStatus({ state: 'closed', merged: true }).merged, true);
+  assert.equal(mergeStatus({ state: 'closed', merged: false }).closed, true);
+  assert.equal(mergeStatus(null).canMerge, false);
 });

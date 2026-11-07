@@ -87,6 +87,7 @@ export function toCard(issue) {
     links: asArray(meta.links).filter((l) => l && typeof l.url === 'string'),
     checks: asArray(meta.checks).filter((c) => typeof c === 'string'),
     options: asArray(meta.options).filter((o) => typeof o === 'string'),
+    pr: Number.isInteger(meta.pr) && meta.pr > 0 ? meta.pr : null,
     details: rest,
     metaError: error,
   };
@@ -124,4 +125,43 @@ export function feedbackComment({ action, label, note, at }) {
   const json = JSON.stringify(payload).replace(/-->/g, '--\\u003e');
   lines.push('', `<!-- inbox-feedback ${json} -->`);
   return lines.join('\n');
+}
+
+// 검토 항목이 가리키는 같은 저장소의 PR 번호. meta.pr가 먼저고, 없으면 링크에서 찾는다.
+export function prNumberFor(card, owner, repo) {
+  if (card.type !== 'review') return null;
+  if (card.pr) return card.pr;
+  const want = `/${owner}/${repo}/pull/`.toLowerCase();
+  for (const link of card.links) {
+    try {
+      const u = new URL(link.url);
+      if (u.hostname !== 'github.com') continue;
+      const path = u.pathname.toLowerCase();
+      if (!path.startsWith(want)) continue;
+      const n = Number(path.slice(want.length).split('/')[0]);
+      if (Number.isInteger(n) && n > 0) return n;
+    } catch {
+      /* 잘못된 링크는 건너뛴다 */
+    }
+  }
+  return null;
+}
+
+// GitHub PR 응답 → 머지 버튼 상태. mergeable_state는 GitHub가 늦게 계산하면 unknown이다.
+export function mergeStatus(pr) {
+  if (!pr) return { canMerge: false, text: 'PR을 불러오지 못했습니다' };
+  if (pr.merged) return { canMerge: false, merged: true, text: '이미 머지됐습니다' };
+  if (pr.state !== 'open') return { canMerge: false, closed: true, text: '머지하지 않고 닫힌 PR입니다' };
+  if (pr.draft) return { canMerge: false, text: '초안 PR이라 머지할 수 없습니다' };
+  const why = {
+    clean: null,
+    unstable: '시험이 아직 돌거나 실패했습니다',
+    dirty: '기본 가지와 충돌이 있습니다',
+    blocked: '필요한 승인이나 시험이 남았습니다',
+    behind: '기본 가지보다 뒤처졌습니다',
+    unknown: 'GitHub가 아직 머지 가능 여부를 계산하는 중입니다',
+  };
+  const state = pr.mergeable_state || 'unknown';
+  if (state === 'clean' || state === 'has_hooks') return { canMerge: true, text: '시험 통과 · 충돌 없음' };
+  return { canMerge: false, text: why[state] || `머지할 수 없는 상태입니다(${state})` };
 }

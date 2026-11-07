@@ -15,6 +15,7 @@ OCHE는 사람의 할 일 인박스입니다. AI가 개발을 계속 진행하�
 - **카드 = 개발 대상 저장소의 GitHub 이슈.** `human:review|read|test|decide` 라벨이 붙은 열린 이슈만 보입니다. `prio:P0|P1|P2`로 정렬합니다(없으면 P2).
 - **본문 맨 위의 ```` ```inbox ```` JSON 블록**에서 요약, 이유, 예상 시간, 확인 포인트, 링크, 결정 선택지를 읽습니다. 형식은 [templates/target-repo/CLAUDE.inbox.md](templates/target-repo/CLAUDE.inbox.md)에 있습니다.
 - **버튼은 저장만 합니다.** 누르면 이슈에 코멘트(사람이 읽을 문장 + 숨은 JSON)가 달리고 `feedback:pending` 라벨이 붙습니다. AI는 돌지 않습니다. AI가 답을 옮기면 `feedback:applied`가 붙고, 이슈가 열려 있어도 할 일에서 빠집니다.
+- **검토 항목에서 바로 머지합니다.** 본문 블록에 `"pr": 19`를 적거나 링크에 같은 저장소의 PR 주소가 있으면, 카드를 열 때 PR 상태(시험·충돌)를 보여 주고 "승인하고 머지" 버튼을 띄웁니다. 시험이 통과하고 충돌이 없을 때만 켜지며, 두 번 눌러야 머지합니다. 머지하면 이슈에 승인을 남기고 닫으므로 AI 반영이 필요 없습니다.
 - **AI 호출은 모아서 합니다.** "지금 반영" 버튼이 개발 대상 저장소에 `repository_dispatch`(`inbox-flush`)를 보내고, 그 저장소의 GitHub Actions가 Claude를 한 번 실행해 쌓인 피드백을 모두 반영합니다. 정기 실행도 같은 워크플로에서 켤 수 있습니다.
 
 ## 설정
@@ -23,7 +24,9 @@ OCHE는 사람의 할 일 인박스입니다. AI가 개발을 계속 진행하�
 2. **GitHub 토큰:** fine-grained personal access token을 만들고, 인박스로 볼 저장소들에만 권한을 줍니다.
    - Issues: Read and write (카드 읽기, 코멘트, 라벨)
    - Contents: Read and write ("지금 반영"의 `repository_dispatch`, 잠금 폴더 읽기에 필요)
+   - Pull requests: Read and write (검토 항목의 PR 상태와 머지)
    - Actions: Read-only (도는 AI 수)
+   - 이미 만든 토큰은 GitHub의 토큰 화면에서 Edit로 권한만 더할 수 있습니다. 토큰 값은 그대로입니다.
    - 토큰은 브라우저 localStorage에만 저장됩니다. 공용 기기에서는 쓰지 마세요.
 3. **개발 대상 저장소(예: space-sandbox1):**
    - [templates/target-repo/.github/workflows/inbox-flush.yml](templates/target-repo/.github/workflows/inbox-flush.yml)을 같은 경로에 복사합니다.
