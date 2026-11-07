@@ -47,6 +47,11 @@ export class GitHub {
     return all;
   }
 
+  // 이슈 코멘트(오래된 것부터, 최대 100개). 내 답과 AI의 처리 기록을 보여 줄 때 쓴다.
+  listComments(number) {
+    return this.request('GET', `${this.base}/issues/${number}/comments?per_page=100`);
+  }
+
   addComment(number, body) {
     return this.request('POST', `${this.base}/issues/${number}/comments`, { body });
   }

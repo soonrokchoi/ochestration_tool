@@ -1,5 +1,5 @@
 import { GitHub } from './github.js';
-import { toCard, sortCards, actionsFor, feedbackComment, isTodo, prNumberFor, mergeStatus, TYPE_LABELS } from './card.js';
+import { toCard, sortCards, actionsFor, feedbackComment, isTodo, prNumberFor, mergeStatus, answerTrail, TYPE_LABELS } from './card.js';
 import { parseProjects, formatProjects, migrateSettings, countLocks, summarize, totalTodo } from './projects.js';
 
 const SETTINGS_KEY = 'inbox.settings';
@@ -17,6 +17,15 @@ const state = {
   open: new Set(),
   prs: new Map(), // PR 번호 → { loading } | { pr } | { error }
   confirmMerge: null, // 머지를 한 번 누른 항목 번호. 한 번 더 누르면 머지한다.
+  answers: new Map(), // 항목 번호 → { loading } | { mine, ai } | { error }
+  notes: new Map(), // 항목 번호 → 쓰던 메모. 다시 그려도 지워지지 않게 둔다.
+  checked: new Set(), // 체크한 확인 포인트("번호:순서")
+  busyKey: null, // 지금 요청 중인 버튼("번호:동작"). 그 버튼에 도는 표시를 띄운다.
+  loading: false, // 목록을 불러오는 중
+  loaded: false, // 한 번이라도 불러왔는지(처음엔 뼈대 카드를 보여 준다)
+  flushing: false, // 반영 요청을 보내는 중
+  flushRunning: false, // 지금 프로젝트에서 inbox-flush 실행이 도는 중
+  justOpened: null, // 방금 펼친 항목(펼침 효과를 한 번만)
   busy: false,
   menuOpen: false,
 };
@@ -74,11 +83,20 @@ function safeUrl(url) {
 let toastTimer;
 function toast(message, kind = 'info') {
   const box = $('#toast');
-  box.textContent = message;
+  box.replaceChildren(
+    el('span', { class: 'toast-icon', 'aria-hidden': 'true' }, kind === 'error' ? '!' : kind === 'ok' ? '✓' : 'i'),
+    el('span', {}, message),
+  );
   box.dataset.kind = kind;
   box.hidden = false;
+  box.classList.remove('show');
+  void box.offsetWidth; // 같은 알림이 이어져도 다시 떠오르게
+  box.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (box.hidden = true), 4000);
+  toastTimer = setTimeout(() => {
+    box.classList.remove('show');
+    setTimeout(() => (box.hidden = !box.classList.contains('show')), 250);
+  }, kind === 'error' ? 6000 : 3500);
 }
 
 // ---------- 프로젝트 ----------
@@ -99,6 +117,8 @@ async function loadProject(p) {
     if (p.id === state.settings.current) {
       state.cards = cards;
       state.prs.clear();
+      state.answers.clear();
+      state.flushRunning = runs.some((r) => /inbox-flush/i.test(`${r.name || ''} ${r.path || ''}`));
     }
   } catch (err) {
     state.statuses[p.id] = { error: err.message };
@@ -111,10 +131,13 @@ async function refreshAll() {
     render();
     return;
   }
-  $('#refresh').disabled = true;
+  if (state.loading) return;
+  state.loading = true;
+  render();
   await Promise.all(state.settings.projects.map(loadProject));
   $('#updated').textContent = `${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })} 갱신`;
-  $('#refresh').disabled = false;
+  state.loading = false;
+  state.loaded = true;
   render();
 }
 
@@ -123,13 +146,17 @@ async function switchProject(id) {
   state.cards = [];
   state.open.clear();
   state.menuOpen = false;
+  state.loaded = false;
   save(SETTINGS_KEY, state.settings);
-  render();
   const p = currentProject();
   if (p) {
-    await loadProject(p);
+    state.loading = true;
     render();
+    await loadProject(p);
+    state.loading = false;
+    state.loaded = true;
   }
+  render();
 }
 
 // ---------- 설정 ----------
@@ -154,32 +181,114 @@ $('#settings-form').addEventListener('submit', (e) => {
 });
 
 // ---------- 피드백과 반영 ----------
-async function sendFeedback(card, action, noteInput) {
-  const note = noteInput.value.trim();
+const noteOf = (card) => (state.notes.get(card.number) || '').trim();
+
+async function sendFeedback(card, action) {
+  const note = noteOf(card);
   if (NOTE_REQUIRED.has(action.id) && !note) {
-    noteInput.focus();
+    document.querySelector(`.note[data-card="${card.number}"]`)?.focus();
     toast(`'${action.label}'은 한 줄 메모가 필요합니다`, 'error');
     return;
   }
   const p = currentProject();
   if (state.busy || !p) return;
   state.busy = true;
+  state.busyKey = `${card.number}:${action.id}`;
+  render();
   try {
     const gh = ghFor(p);
     const body = feedbackComment({ action: action.id, label: action.label, note, at: new Date().toISOString() });
     await gh.addComment(card.number, body);
     await gh.addLabels(card.number, ['feedback:pending']);
     card.pending = true;
+    card.answered = false;
+    state.notes.delete(card.number);
+    state.answers.delete(card.number);
     state.open.delete(card.number);
     const s = state.statuses[p.id];
     if (s && !s.error) state.statuses[p.id] = { ...summarize({ cards: state.cards }), running: s.running };
-    toast(`#${card.number}에 '${action.label}' 저장. 반영 대기에 들어갔습니다`);
+    toast(`'${action.label}' 저장 · 반영 대기로 옮겼습니다`, 'ok');
   } catch (err) {
     toast(err.message, 'error');
   } finally {
     state.busy = false;
+    state.busyKey = null;
     render();
   }
+}
+
+// ---------- 내 답과 AI 처리 기록 ----------
+async function loadAnswer(number) {
+  const p = currentProject();
+  if (!p || state.answers.has(number)) return;
+  state.answers.set(number, { loading: true });
+  try {
+    state.answers.set(number, answerTrail(await ghFor(p).listComments(number)));
+  } catch (err) {
+    state.answers.set(number, { error: err.message });
+  }
+  render();
+}
+
+const timeText = (at) => {
+  const d = new Date(at);
+  if (Number.isNaN(d.getTime())) return '';
+  const sameDay = d.toDateString() === new Date().toDateString();
+  return sameDay
+    ? d.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' });
+};
+
+// 답을 남긴 항목의 "내 답" 한 줄(접힌 카드)과 상자(펼친 카드).
+function answerLine(card) {
+  if (!card.pending && !card.answered) return null;
+  const a = state.answers.get(card.number);
+  if (!a) loadAnswer(card.number);
+  if (!a || a.loading) return el('span', { class: 'answer-line muted' }, el('span', { class: 'shimmer' }, '내 답 불러오는 중'));
+  if (a.error || !a.mine) return null;
+  return el('span', { class: 'answer-line' }, el('b', {}, '내 답 '), a.mine.label, a.mine.note ? ` — ${a.mine.note}` : '');
+}
+
+function answerBox(card) {
+  if (!card.pending && !card.answered) return null;
+  const a = state.answers.get(card.number);
+  if (!a || a.loading || a.error || !a.mine) return null;
+  return el(
+    'div',
+    { class: 'trail' },
+    el(
+      'div',
+      { class: 'trail-row mine' },
+      el('span', { class: 'who' }, '나'),
+      el('div', {}, el('p', { class: 'trail-text' }, a.mine.label), a.mine.note ? el('p', { class: 'trail-note' }, a.mine.note) : null),
+      el('time', { class: 'muted small' }, timeText(a.mine.at)),
+    ),
+    a.ai
+      ? el(
+          'div',
+          { class: 'trail-row ai' },
+          el('span', { class: 'who' }, 'AI'),
+          el('p', { class: 'trail-text' }, a.ai.text),
+          el('time', { class: 'muted small' }, timeText(a.ai.at)),
+        )
+      : el(
+          'div',
+          { class: 'trail-row ai waiting' },
+          el('span', { class: 'who' }, 'AI'),
+          el('p', { class: 'trail-text muted' }, '"지금 반영"을 누르면 처리합니다'),
+        ),
+  );
+}
+
+// 요청 중이면 그 버튼에 도는 표시를 띄우고, 다른 버튼은 잠근다.
+function actButton(key, label, cls, onclick) {
+  const busy = state.busyKey === key;
+  return el(
+    'button',
+    { type: 'button', class: `act ${cls || ''}${busy ? ' is-busy' : ''}`, disabled: state.busy, 'aria-busy': busy ? 'true' : null, onclick },
+    busy ? el('span', { class: 'spinner', 'aria-hidden': 'true' }) : null,
+    el('span', {}, label),
+  );
 }
 
 // ---------- PR 머지 ----------
@@ -213,7 +322,7 @@ async function closeAsDone(gh, card, label, note) {
   await gh.closeIssue(card.number);
 }
 
-async function mergeFromCard(card, number, noteInput) {
+async function mergeFromCard(card, number) {
   const p = currentProject();
   if (state.busy || !p) return;
   if (state.confirmMerge !== card.number) {
@@ -229,6 +338,8 @@ async function mergeFromCard(card, number, noteInput) {
   }
   state.confirmMerge = null;
   state.busy = true;
+  state.busyKey = `${card.number}:merge`;
+  render();
   const gh = ghFor(p);
   try {
     // 누르기 직전 상태로 다시 확인한다. 그사이 커밋이 올라왔으면 sha가 달라 GitHub가 거절한다.
@@ -240,67 +351,63 @@ async function mergeFromCard(card, number, noteInput) {
       return;
     }
     await gh.mergePull(number, pr.head.sha);
-    await closeAsDone(gh, card, `승인하고 PR #${number} 머지`, noteInput.value.trim());
+    await closeAsDone(gh, card, `승인하고 PR #${number} 머지`, noteOf(card));
     removeCard(card);
-    toast(`PR #${number}을 머지하고 #${card.number}을 닫았습니다`);
+    toast(`PR #${number} 머지 완료 · 항목을 닫았습니다`, 'ok');
   } catch (err) {
     state.prs.delete(number);
     toast(explain(err), 'error');
   } finally {
     state.busy = false;
+    state.busyKey = null;
     render();
   }
 }
 
-async function closeMerged(card, number, noteInput) {
+async function closeMerged(card, number) {
   const p = currentProject();
   if (state.busy || !p) return;
   state.busy = true;
+  state.busyKey = `${card.number}:close`;
+  render();
   try {
-    await closeAsDone(ghFor(p), card, `PR #${number} 머지 확인`, noteInput.value.trim());
+    await closeAsDone(ghFor(p), card, `PR #${number} 머지 확인`, noteOf(card));
     removeCard(card);
-    toast(`#${card.number}을 닫았습니다`);
+    toast(`#${card.number}을 닫았습니다`, 'ok');
   } catch (err) {
     toast(explain(err), 'error');
   } finally {
     state.busy = false;
+    state.busyKey = null;
     render();
   }
 }
 
-function prBox(card, noteInput) {
+function prBox(card) {
   const p = currentProject();
   const number = p && prNumberFor(card, p.owner, p.repo);
   if (!number) return null;
   const entry = state.prs.get(number);
   if (!entry) {
     loadPull(number);
-    return el('div', { class: 'pr-box' }, el('span', { class: 'muted' }, `PR #${number} 상태를 불러오는 중…`));
   }
-  if (entry.loading) return el('div', { class: 'pr-box' }, el('span', { class: 'muted' }, `PR #${number} 상태를 불러오는 중…`));
+  if (!entry || entry.loading) return el('div', { class: 'pr-box' }, el('span', { class: 'shimmer muted' }, `PR #${number} 상태 확인 중`));
   if (entry.error) return el('div', { class: 'pr-box' }, el('span', { class: 'warn' }, `PR #${number}: ${entry.error}`));
   const status = mergeStatus(entry.pr);
   const confirming = state.confirmMerge === card.number;
   const button = status.canMerge
-    ? el(
-        'button',
-        { type: 'button', class: `act act-merge${confirming ? ' confirm' : ''}`, onclick: () => mergeFromCard(card, number, noteInput) },
-        confirming ? '한 번 더 누르면 머지합니다' : '승인하고 머지',
+    ? actButton(
+        `${card.number}:merge`,
+        state.busyKey === `${card.number}:merge` ? '머지하는 중' : confirming ? '한 번 더 누르면 머지합니다' : '승인하고 머지',
+        `act-merge${confirming ? ' confirm' : ''}`,
+        () => mergeFromCard(card, number),
       )
     : status.merged
-      ? el('button', { type: 'button', class: 'act', onclick: () => closeMerged(card, number, noteInput) }, '완료로 닫기')
-      : el(
-          'button',
-          {
-            type: 'button',
-            class: 'act',
-            onclick: () => {
-              state.prs.delete(number);
-              render();
-            },
-          },
-          '상태 다시 보기',
-        );
+      ? actButton(`${card.number}:close`, '완료로 닫기', '', () => closeMerged(card, number))
+      : actButton(`${card.number}:recheck`, '상태 다시 보기', '', () => {
+          state.prs.delete(number);
+          render();
+        });
   return el(
     'div',
     { class: 'pr-box' },
@@ -324,15 +431,18 @@ async function flush() {
     toast('방금 반영을 요청했습니다. 1분 뒤에 다시 시도하세요', 'error');
     return;
   }
-  $('#flush').disabled = true;
+  state.flushing = true;
+  render();
   try {
     await ghFor(p).dispatchFlush(pending);
     save(FLUSH_KEY, { ...(typeof lastByProject === 'object' ? lastByProject : {}), [p.id]: Date.now() });
-    toast(`피드백 ${pending.length}건 반영을 요청했습니다`);
+    state.flushRunning = true;
+    toast(`피드백 ${pending.length}건 반영을 시작했습니다`, 'ok');
     setTimeout(() => loadProject(p).then(render), 15_000);
   } catch (err) {
     toast(err.message, 'error');
   } finally {
+    state.flushing = false;
     render();
   }
 }
@@ -431,7 +541,10 @@ function cardView(card) {
   const isOpen = state.open.has(card.number);
   const toggle = () => {
     if (isOpen) state.open.delete(card.number);
-    else state.open.add(card.number);
+    else {
+      state.open.add(card.number);
+      state.justOpened = card.number;
+    }
     render();
   };
 
@@ -440,27 +553,46 @@ function cardView(card) {
     { class: 'card-head', type: 'button', 'aria-expanded': String(isOpen), onclick: toggle },
     el('span', { class: `prio prio-${card.priority}` }, card.priority),
     el('span', { class: `type type-${card.type}` }, TYPE_LABELS[card.type]),
-    el('span', { class: 'summary' }, card.summary),
+    el('span', { class: 'head-text' }, el('span', { class: 'summary' }, card.summary), isOpen ? null : answerLine(card)),
     card.estMinutes !== null ? el('span', { class: 'est' }, `${card.estMinutes}분`) : null,
+    el('span', { class: 'chevron', 'aria-hidden': 'true' }),
   );
 
-  if (!isOpen) return el('li', { class: 'card' }, head);
+  if (!isOpen) return el('li', { class: 'card', 'data-card': card.number }, head);
 
   const links = card.links
     .map((l) => ({ label: l.label || l.url, href: safeUrl(l.url) }))
     .filter((l) => l.href);
-  const note = el('textarea', { class: 'note', rows: '2', placeholder: '한 줄 메모 (수정 요청·버그·질문·기타는 필수)' });
+  const note = el('textarea', {
+    class: 'note',
+    rows: '2',
+    'data-card': card.number,
+    placeholder: '한 줄 메모 (수정 요청·버그·질문·기타는 필수)',
+    oninput: (e) => state.notes.set(card.number, e.target.value),
+  });
+  note.value = state.notes.get(card.number) || '';
+  const trail = state.answers.get(card.number);
+  const chosen = trail && trail.mine ? trail.mine.action : null;
 
   const body = el(
     'div',
     { class: 'card-body' },
     card.metaError ? el('p', { class: 'warn' }, card.metaError) : null,
+    answerBox(card),
     card.why ? el('p', { class: 'why' }, card.why) : null,
     card.checks.length
       ? el(
           'ul',
           { class: 'checks' },
-          card.checks.map((c) => el('li', {}, el('label', {}, el('input', { type: 'checkbox' }), ' ', c))),
+          card.checks.map((c, i) => {
+            const key = `${card.number}:${i}`;
+            const box = el('input', {
+              type: 'checkbox',
+              onchange: (e) => (e.target.checked ? state.checked.add(key) : state.checked.delete(key)),
+            });
+            box.checked = state.checked.has(key);
+            return el('li', {}, el('label', {}, box, el('span', {}, c)));
+          }),
         )
       : null,
     el(
@@ -470,23 +602,39 @@ function cardView(card) {
       el('a', { href: card.url, target: '_blank', rel: 'noopener', class: 'gh' }, `GitHub #${card.number}`),
     ),
     card.details ? el('details', {}, el('summary', {}, '본문 보기'), el('pre', { class: 'details' }, card.details)) : null,
-    card.pending
-      ? el('p', { class: 'muted' }, '피드백을 남겼고 AI 반영을 기다리는 중입니다. 다시 남기면 덧붙여집니다.')
-      : card.answered
-        ? el('p', { class: 'muted' }, '답이 반영됐고 AI가 처리하는 중입니다. 바꾸고 싶으면 다시 남기세요.')
-        : null,
+    card.pending || card.answered
+      ? el('p', { class: 'muted small' }, '답을 바꾸려면 다시 고르세요. 새 답이 덧붙여집니다.')
+      : null,
     note,
-    prBox(card, note),
+    prBox(card),
     el(
       'div',
       { class: 'actions' },
       actionsFor(card).map((a) =>
-        el('button', { type: 'button', class: `act act-${a.id}`, onclick: () => sendFeedback(card, a, note) }, a.label),
+        actButton(`${card.number}:${a.id}`, a.label, `act-${a.id}${chosen === a.id ? ' chosen' : ''}`, () => sendFeedback(card, a)),
       ),
     ),
   );
 
-  return el('li', { class: 'card open' }, head, body);
+  const opened = state.justOpened === card.number;
+  if (opened) state.justOpened = null;
+  return el('li', { class: `card open${opened ? ' just-opened' : ''}`, 'data-card': card.number }, head, body);
+}
+
+// 처음 불러오는 동안 보여 줄 뼈대 카드.
+function skeleton() {
+  return el(
+    'section',
+    { 'aria-busy': 'true', 'aria-label': '불러오는 중' },
+    el('h2', {}, el('span', { class: 'bone', style: 'width:72px' })),
+    el(
+      'ul',
+      { class: 'cards' },
+      [0, 1, 2].map((i) =>
+        el('li', { class: 'card skeleton' }, el('div', { class: 'card-head' }, el('span', { class: 'bone', style: 'width:24px' }), el('span', { class: 'bone', style: 'width:40px' }), el('span', { class: 'bone', style: `flex:1;max-width:${70 - i * 12}%` }))),
+      ),
+    ),
+  );
 }
 
 function section(title, cards, emptyText) {
@@ -498,8 +646,27 @@ function section(title, cards, emptyText) {
   );
 }
 
+function renderFlush(count) {
+  const btn = $('#flush');
+  const working = state.flushing || state.flushRunning;
+  btn.classList.toggle('is-busy', working);
+  btn.disabled = working || count === 0;
+  btn.replaceChildren(
+    ...[working ? el('span', { class: 'spinner', 'aria-hidden': 'true' }) : null].filter(Boolean),
+    el('span', {}, state.flushing ? '요청하는 중' : state.flushRunning ? 'AI 반영 중' : `지금 반영${count ? ` (${count})` : ''}`),
+  );
+}
+
+function renderRefresh() {
+  const btn = $('#refresh');
+  btn.classList.toggle('is-busy', state.loading);
+  btn.setAttribute('aria-busy', String(state.loading));
+  document.body.classList.toggle('is-loading', state.loading);
+}
+
 function render() {
   renderSwitcher();
+  renderRefresh();
   const total = totalTodo(state.statuses);
   document.title = total > 0 ? `(${total}) OCHE` : 'OCHE';
 
@@ -514,14 +681,17 @@ function render() {
         el('button', { type: 'button', class: 'primary', onclick: openSettings }, '설정하기'),
       ),
     );
-    $('#flush').disabled = true;
+    renderFlush(0);
     return;
   }
   const todo = state.cards.filter(isTodo);
   const pending = state.cards.filter((c) => c.pending);
   const answered = state.cards.filter((c) => c.answered);
-  $('#flush').textContent = `지금 반영 (${pending.length})`;
-  $('#flush').disabled = pending.length === 0;
+  renderFlush(pending.length);
+  if (!state.loaded) {
+    main.append(skeleton());
+    return;
+  }
   main.append(
     section('할 일', todo, '지금은 할 일이 없습니다.'),
     section('반영 대기', pending, '반영을 기다리는 피드백이 없습니다.'),
