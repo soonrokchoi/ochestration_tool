@@ -1,4 +1,5 @@
 // 프로젝트 목록 설정과 프로젝트별 상태 요약. DOM·네트워크와 무관한 순수 로직.
+import { isTodo } from './card.js';
 
 // 설정 글: 한 줄에 프로젝트 하나. "이름 | owner/repo | 잠금 폴더(선택)"
 // 이름을 빼고 "owner/repo"만 적어도 된다. #으로 시작하는 줄과 빈 줄은 건너뛴다.
@@ -82,7 +83,7 @@ export function countLocks(entries) {
 
 // 카드 목록 + 실행 중인 워크플로 + 잠금 수 → 상단 표시.
 export function summarize({ cards, runs, locks }) {
-  const todo = (cards || []).filter((c) => !c.pending);
+  const todo = (cards || []).filter(isTodo);
   return {
     todo: todo.length,
     build: todo.some((c) => c.type === 'test'),

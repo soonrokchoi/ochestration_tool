@@ -74,6 +74,7 @@ test('summarize counts todo, build and running', () => {
     { type: 'test', pending: false },
     { type: 'review', pending: false },
     { type: 'test', pending: true },
+    { type: 'test', pending: false, answered: true },
   ];
   const runs = [{ name: 'inbox-flush' }, { name: 'check' }];
   assert.deepEqual(summarize({ cards, runs, locks: 2 }), { todo: 2, build: true, running: 3 });

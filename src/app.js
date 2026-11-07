@@ -1,5 +1,5 @@
 import { GitHub } from './github.js';
-import { toCard, sortCards, actionsFor, feedbackComment, TYPE_LABELS } from './card.js';
+import { toCard, sortCards, actionsFor, feedbackComment, isTodo, TYPE_LABELS } from './card.js';
 import { parseProjects, formatProjects, migrateSettings, countLocks, summarize, totalTodo } from './projects.js';
 
 const SETTINGS_KEY = 'inbox.settings';
@@ -335,7 +335,9 @@ function cardView(card) {
     card.details ? el('details', {}, el('summary', {}, '본문 보기'), el('pre', { class: 'details' }, card.details)) : null,
     card.pending
       ? el('p', { class: 'muted' }, '피드백을 남겼고 AI 반영을 기다리는 중입니다. 다시 남기면 덧붙여집니다.')
-      : null,
+      : card.answered
+        ? el('p', { class: 'muted' }, '답이 반영됐고 AI가 처리하는 중입니다. 바꾸고 싶으면 다시 남기세요.')
+        : null,
     note,
     el(
       'div',
@@ -377,14 +379,16 @@ function render() {
     $('#flush').disabled = true;
     return;
   }
-  const todo = state.cards.filter((c) => !c.pending);
+  const todo = state.cards.filter(isTodo);
   const pending = state.cards.filter((c) => c.pending);
+  const answered = state.cards.filter((c) => c.answered);
   $('#flush').textContent = `지금 반영 (${pending.length})`;
   $('#flush').disabled = pending.length === 0;
   main.append(
     section('할 일', todo, '지금은 할 일이 없습니다.'),
     section('반영 대기', pending, '반영을 기다리는 피드백이 없습니다.'),
   );
+  if (answered.length) main.append(section('답함 · AI 처리 중', answered, ''));
 }
 
 // ---------- 시작 ----------
