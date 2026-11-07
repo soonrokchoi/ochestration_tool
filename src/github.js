@@ -56,6 +56,20 @@ export class GitHub {
     return this.request('POST', `${this.base}/issues/${number}/labels`, { labels });
   }
 
+  // PR 하나. 토큰에 Pull requests 읽기 권한이 필요하다.
+  getPull(number) {
+    return this.request('GET', `${this.base}/pulls/${number}`);
+  }
+
+  // 머지. sha를 주면 그 뒤에 커밋이 더 올라온 경우 GitHub가 거절한다. Pull requests·Contents 쓰기 권한이 필요하다.
+  mergePull(number, sha) {
+    return this.request('PUT', `${this.base}/pulls/${number}/merge`, { sha, merge_method: 'merge' });
+  }
+
+  closeIssue(number) {
+    return this.request('PATCH', `${this.base}/issues/${number}`, { state: 'closed', state_reason: 'completed' });
+  }
+
   // 지금 돌거나 기다리는 워크플로 실행. 토큰에 Actions 읽기 권한이 없으면 빈 목록.
   async listActiveRuns() {
     const runs = [];

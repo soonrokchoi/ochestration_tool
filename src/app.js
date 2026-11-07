@@ -1,5 +1,5 @@
 import { GitHub } from './github.js';
-import { toCard, sortCards, actionsFor, feedbackComment, isTodo, TYPE_LABELS } from './card.js';
+import { toCard, sortCards, actionsFor, feedbackComment, isTodo, prNumberFor, mergeStatus, TYPE_LABELS } from './card.js';
 import { parseProjects, formatProjects, migrateSettings, countLocks, summarize, totalTodo } from './projects.js';
 
 const SETTINGS_KEY = 'inbox.settings';
@@ -15,6 +15,8 @@ const state = {
   statuses: {}, // 프로젝트 id → { todo, build, running } | { error }
   cards: [], // 지금 프로젝트의 카드
   open: new Set(),
+  prs: new Map(), // PR 번호 → { loading } | { pr } | { error }
+  confirmMerge: null, // 머지를 한 번 누른 항목 번호. 한 번 더 누르면 머지한다.
   busy: false,
   menuOpen: false,
 };
@@ -94,7 +96,10 @@ async function loadProject(p) {
     ]);
     const cards = sortCards(issues.map(toCard).filter(Boolean));
     state.statuses[p.id] = summarize({ cards, runs, locks: countLocks(lockEntries) });
-    if (p.id === state.settings.current) state.cards = cards;
+    if (p.id === state.settings.current) {
+      state.cards = cards;
+      state.prs.clear();
+    }
   } catch (err) {
     state.statuses[p.id] = { error: err.message };
     if (p.id === state.settings.current) toast(`${p.name}: ${err.message}`, 'error');
@@ -175,6 +180,138 @@ async function sendFeedback(card, action, noteInput) {
     state.busy = false;
     render();
   }
+}
+
+// ---------- PR 머지 ----------
+const PERMISSION_HINT = '토큰에 Pull requests 읽기·쓰기 권한을 더하세요(설정의 안내 참고)';
+const explain = (err) => (/GitHub 403/.test(err.message) ? `${err.message} — ${PERMISSION_HINT}` : err.message);
+
+async function loadPull(number) {
+  const p = currentProject();
+  if (!p || state.prs.has(number)) return;
+  state.prs.set(number, { loading: true });
+  try {
+    state.prs.set(number, { pr: await ghFor(p).getPull(number) });
+  } catch (err) {
+    state.prs.set(number, { error: explain(err) });
+  }
+  render();
+}
+
+function removeCard(card) {
+  const p = currentProject();
+  state.cards = state.cards.filter((c) => c.number !== card.number);
+  state.open.delete(card.number);
+  const s = p && state.statuses[p.id];
+  if (s && !s.error) state.statuses[p.id] = { ...summarize({ cards: state.cards }), running: s.running };
+}
+
+// 승인을 남기고 항목을 닫는다. 머지가 끝난 일이라 AI 반영은 필요 없다.
+async function closeAsDone(gh, card, label, note) {
+  await gh.addComment(card.number, feedbackComment({ action: 'approve', label, note, at: new Date().toISOString() }));
+  await gh.addLabels(card.number, ['feedback:applied']);
+  await gh.closeIssue(card.number);
+}
+
+async function mergeFromCard(card, number, noteInput) {
+  const p = currentProject();
+  if (state.busy || !p) return;
+  if (state.confirmMerge !== card.number) {
+    state.confirmMerge = card.number;
+    render();
+    setTimeout(() => {
+      if (state.confirmMerge === card.number) {
+        state.confirmMerge = null;
+        render();
+      }
+    }, 5000);
+    return;
+  }
+  state.confirmMerge = null;
+  state.busy = true;
+  const gh = ghFor(p);
+  try {
+    // 누르기 직전 상태로 다시 확인한다. 그사이 커밋이 올라왔으면 sha가 달라 GitHub가 거절한다.
+    const pr = await gh.getPull(number);
+    const status = mergeStatus(pr);
+    if (!status.canMerge) {
+      state.prs.set(number, { pr });
+      toast(`PR #${number}: ${status.text}`, 'error');
+      return;
+    }
+    await gh.mergePull(number, pr.head.sha);
+    await closeAsDone(gh, card, `승인하고 PR #${number} 머지`, noteInput.value.trim());
+    removeCard(card);
+    toast(`PR #${number}을 머지하고 #${card.number}을 닫았습니다`);
+  } catch (err) {
+    state.prs.delete(number);
+    toast(explain(err), 'error');
+  } finally {
+    state.busy = false;
+    render();
+  }
+}
+
+async function closeMerged(card, number, noteInput) {
+  const p = currentProject();
+  if (state.busy || !p) return;
+  state.busy = true;
+  try {
+    await closeAsDone(ghFor(p), card, `PR #${number} 머지 확인`, noteInput.value.trim());
+    removeCard(card);
+    toast(`#${card.number}을 닫았습니다`);
+  } catch (err) {
+    toast(explain(err), 'error');
+  } finally {
+    state.busy = false;
+    render();
+  }
+}
+
+function prBox(card, noteInput) {
+  const p = currentProject();
+  const number = p && prNumberFor(card, p.owner, p.repo);
+  if (!number) return null;
+  const entry = state.prs.get(number);
+  if (!entry) {
+    loadPull(number);
+    return el('div', { class: 'pr-box' }, el('span', { class: 'muted' }, `PR #${number} 상태를 불러오는 중…`));
+  }
+  if (entry.loading) return el('div', { class: 'pr-box' }, el('span', { class: 'muted' }, `PR #${number} 상태를 불러오는 중…`));
+  if (entry.error) return el('div', { class: 'pr-box' }, el('span', { class: 'warn' }, `PR #${number}: ${entry.error}`));
+  const status = mergeStatus(entry.pr);
+  const confirming = state.confirmMerge === card.number;
+  const button = status.canMerge
+    ? el(
+        'button',
+        { type: 'button', class: `act act-merge${confirming ? ' confirm' : ''}`, onclick: () => mergeFromCard(card, number, noteInput) },
+        confirming ? '한 번 더 누르면 머지합니다' : '승인하고 머지',
+      )
+    : status.merged
+      ? el('button', { type: 'button', class: 'act', onclick: () => closeMerged(card, number, noteInput) }, '완료로 닫기')
+      : el(
+          'button',
+          {
+            type: 'button',
+            class: 'act',
+            onclick: () => {
+              state.prs.delete(number);
+              render();
+            },
+          },
+          '상태 다시 보기',
+        );
+  return el(
+    'div',
+    { class: 'pr-box' },
+    el(
+      'p',
+      { class: `pr-status${status.canMerge ? ' ok' : ''}` },
+      el('a', { href: safeUrl(entry.pr.html_url) || '#', target: '_blank', rel: 'noopener' }, `PR #${number}`),
+      ` · ${status.text}`,
+    ),
+    button,
+  );
 }
 
 async function flush() {
@@ -339,6 +476,7 @@ function cardView(card) {
         ? el('p', { class: 'muted' }, '답이 반영됐고 AI가 처리하는 중입니다. 바꾸고 싶으면 다시 남기세요.')
         : null,
     note,
+    prBox(card, note),
     el(
       'div',
       { class: 'actions' },
