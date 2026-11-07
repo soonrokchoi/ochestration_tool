@@ -32,3 +32,7 @@ npm start     # 로컬 미리보기
 ```
 
 빌드 단계는 없습니다. `index.html`, `styles.css`, `src/`가 그대로 배포됩니다.
+
+## 라이선스
+
+[MIT](LICENSE)
