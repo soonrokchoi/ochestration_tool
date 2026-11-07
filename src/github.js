@@ -56,6 +56,32 @@ export class GitHub {
     return this.request('POST', `${this.base}/issues/${number}/labels`, { labels });
   }
 
+  // 지금 돌거나 기다리는 워크플로 실행. 토큰에 Actions 읽기 권한이 없으면 빈 목록.
+  async listActiveRuns() {
+    const runs = [];
+    for (const status of ['in_progress', 'queued']) {
+      try {
+        const res = await this.request('GET', `${this.base}/actions/runs?status=${status}&per_page=50`);
+        runs.push(...(res.workflow_runs || []));
+      } catch (err) {
+        if (!/GitHub (403|404)/.test(err.message)) throw err;
+      }
+    }
+    return runs;
+  }
+
+  // 폴더의 파일 목록. 폴더가 없으면 빈 목록.
+  async listDir(path) {
+    try {
+      const encoded = path.split('/').map(encodeURIComponent).join('/');
+      const res = await this.request('GET', `${this.base}/contents/${encoded}`);
+      return Array.isArray(res) ? res : [];
+    } catch (err) {
+      if (/GitHub 404/.test(err.message)) return [];
+      throw err;
+    }
+  }
+
   // 개발 대상 저장소의 GitHub Actions(inbox-flush)를 깨운다. 토큰에 Contents 쓰기 권한이 필요하다.
   dispatchFlush(issueNumbers) {
     return this.request('POST', `${this.base}/dispatches`, {

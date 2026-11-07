@@ -6,6 +6,12 @@ AI가 개발을 계속 진행하는 동안, 사람이 해야 할 일(검토, 읽
 
 ## 동작 방식
 
+- **여러 프로젝트.** 설정에 저장소를 여러 개 적으면 상단 메뉴로 전환합니다. 전환하면 그 프로젝트의 항목만 보입니다. 전환하지 않아도 프로젝트마다 세 가지가 보입니다.
+  - 회전 화살표 안의 숫자: 지금 도는 AI 수. 이름이나 경로에 claude·codex·inbox·agent가 들어간 워크플로 실행 수 + (설정했다면) 잠금 폴더의 잠금 파일 수
+  - 빨간 배지: 확인할 할 일 수 (반영 대기 제외)
+  - 녹색 점: 확인할 테스트(빌드) 항목이 있음
+  - 브라우저 탭 제목에 전체 할 일 수가 붙고, 다른 프로젝트에 할 일이 있으면 프로젝트 이름 옆에 작은 빨간 점이 뜹니다. 화면이 보이는 동안 2분마다 갱신합니다.
+
 - **카드 = 개발 대상 저장소의 GitHub 이슈.** `human:review|read|test|decide` 라벨이 붙은 열린 이슈만 보입니다. `prio:P0|P1|P2`로 정렬합니다(없으면 P2).
 - **본문 맨 위의 ```` ```inbox ```` JSON 블록**에서 요약, 이유, 예상 시간, 확인 포인트, 링크, 결정 선택지를 읽습니다. 형식은 [templates/target-repo/CLAUDE.inbox.md](templates/target-repo/CLAUDE.inbox.md)에 있습니다.
 - **버튼은 저장만 합니다.** 누르면 이슈에 코멘트(사람이 읽을 문장 + 숨은 JSON)가 달리고 `feedback:pending` 라벨이 붙습니다. AI는 돌지 않습니다.
@@ -14,15 +20,21 @@ AI가 개발을 계속 진행하는 동안, 사람이 해야 할 일(검토, 읽
 ## 설정
 
 1. **이 저장소:** Settings → Pages → Source를 "GitHub Actions"로 바꿉니다. main에 푸시하면 테스트 후 배포됩니다.
-2. **GitHub 토큰:** fine-grained personal access token을 만들고, 개발 대상 저장소 하나에만 권한을 줍니다.
+2. **GitHub 토큰:** fine-grained personal access token을 만들고, 인박스로 볼 저장소들에만 권한을 줍니다.
    - Issues: Read and write (카드 읽기, 코멘트, 라벨)
-   - Contents: Read and write ("지금 반영"의 `repository_dispatch`에 필요)
+   - Contents: Read and write ("지금 반영"의 `repository_dispatch`, 잠금 폴더 읽기에 필요)
+   - Actions: Read-only (도는 AI 수)
    - 토큰은 브라우저 localStorage에만 저장됩니다. 공용 기기에서는 쓰지 마세요.
 3. **개발 대상 저장소(예: space-sandbox1):**
    - [templates/target-repo/.github/workflows/inbox-flush.yml](templates/target-repo/.github/workflows/inbox-flush.yml)을 같은 경로에 복사합니다.
    - 저장소 Secrets에 `CLAUDE_CODE_OAUTH_TOKEN`(또는 `ANTHROPIC_API_KEY`)을 넣습니다. 터미널에서 `claude setup-token`으로 OAuth 토큰을 만들 수 있습니다.
    - [CLAUDE.inbox.md](templates/target-repo/CLAUDE.inbox.md) 내용을 CLAUDE.md(그리고 AGENTS.md)에 붙여 AI가 카드를 만들고 피드백을 읽게 합니다.
-4. 배포된 페이지에서 "설정"을 눌러 `owner/repo`와 토큰을 입력합니다.
+4. 배포된 페이지에서 "설정"을 눌러 토큰과 프로젝트 목록을 입력합니다. 한 줄에 하나씩 `이름 | owner/repo | 잠금 폴더`(이름·잠금 폴더는 생략 가능)로 적습니다.
+
+   ```text
+   Halcyon | soonrokchoi/space-sandbox1 | docs/agents/locks
+   다른 게임 | soonrokchoi/other-game
+   ```
 
 ## 개발
 
