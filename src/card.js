@@ -77,6 +77,8 @@ export function toCard(issue) {
     type,
     priority,
     pending: names.includes('feedback:pending'),
+    // AI가 답을 옮겼지만 이슈가 아직 열려 있는 항목(결정을 처리하는 중 등). 사람 차례가 아니다.
+    answered: !names.includes('feedback:pending') && names.includes('feedback:applied'),
     createdAt: issue.created_at,
     summary: typeof meta.summary === 'string' && meta.summary ? meta.summary : issue.title,
     why: typeof meta.why === 'string' ? meta.why : '',
@@ -88,6 +90,11 @@ export function toCard(issue) {
     details: rest,
     metaError: error,
   };
+}
+
+// 사람이 지금 해야 하는 항목인가: 답을 남기지 않았고, 이미 반영된 답도 없다.
+export function isTodo(card) {
+  return !card.pending && !card.answered;
 }
 
 // P0 → P2, 같은 중요도는 오래된 것부터.

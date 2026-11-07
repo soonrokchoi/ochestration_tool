@@ -35,4 +35,5 @@
 - 사람이 버튼을 누르면 이슈에 코멘트가 달리고 `feedback:pending` 라벨이 붙는다.
 - 코멘트 끝의 `<!-- inbox-feedback {...} -->` JSON에 `action`(approve, request-changes, hold, reject, read, question, pass, bug, not-tested, option-N, other), `label`, `note`가 있다.
 - 매 개발 사이클을 시작할 때 `feedback:pending` 이슈를 먼저 처리한다. 처리하면 `feedback:applied`로 바꾼다.
+- `feedback:applied`가 붙은 열린 이슈는 OCHE의 할 일에서 빠진다. 같은 이슈로 사람에게 다시 물어야 하면 본문을 고치고 `feedback:applied`를 뗀다.
 - `hold`는 그 일을 멈추고 사람이 다시 말할 때까지 기다린다는 뜻이다. `reject`는 그 방향을 버린다는 뜻이고, DECISIONS.md에 한 줄 남긴다.

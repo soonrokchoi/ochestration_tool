@@ -14,7 +14,7 @@ OCHE는 사람의 할 일 인박스입니다. AI가 개발을 계속 진행하�
 
 - **카드 = 개발 대상 저장소의 GitHub 이슈.** `human:review|read|test|decide` 라벨이 붙은 열린 이슈만 보입니다. `prio:P0|P1|P2`로 정렬합니다(없으면 P2).
 - **본문 맨 위의 ```` ```inbox ```` JSON 블록**에서 요약, 이유, 예상 시간, 확인 포인트, 링크, 결정 선택지를 읽습니다. 형식은 [templates/target-repo/CLAUDE.inbox.md](templates/target-repo/CLAUDE.inbox.md)에 있습니다.
-- **버튼은 저장만 합니다.** 누르면 이슈에 코멘트(사람이 읽을 문장 + 숨은 JSON)가 달리고 `feedback:pending` 라벨이 붙습니다. AI는 돌지 않습니다.
+- **버튼은 저장만 합니다.** 누르면 이슈에 코멘트(사람이 읽을 문장 + 숨은 JSON)가 달리고 `feedback:pending` 라벨이 붙습니다. AI는 돌지 않습니다. AI가 답을 옮기면 `feedback:applied`가 붙고, 이슈가 열려 있어도 할 일에서 빠집니다.
 - **AI 호출은 모아서 합니다.** "지금 반영" 버튼이 개발 대상 저장소에 `repository_dispatch`(`inbox-flush`)를 보내고, 그 저장소의 GitHub Actions가 Claude를 한 번 실행해 쌓인 피드백을 모두 반영합니다. 정기 실행도 같은 워크플로에서 켤 수 있습니다.
 
 ## 설정

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseMeta, toCard, sortCards, actionsFor, feedbackComment } from '../src/card.js';
+import { parseMeta, toCard, sortCards, actionsFor, feedbackComment, isTodo } from '../src/card.js';
 
 const issue = (over = {}) => ({
   number: 1,
@@ -75,4 +75,14 @@ test('feedbackComment embeds machine-readable JSON that cannot break the comment
   assert.ok(m);
   assert.equal(m[1].includes('-->'), false);
   assert.equal(JSON.parse(m[1]).note, '착지 -->끊김');
+});
+
+test('answered items leave the todo list until feedback:applied is removed', () => {
+  const answered = toCard(issue({ labels: ['human:decide', 'feedback:applied'] }));
+  assert.equal(answered.answered, true);
+  assert.equal(isTodo(answered), false);
+  const again = toCard(issue({ labels: ['human:decide', 'feedback:applied', 'feedback:pending'] }));
+  assert.equal(again.answered, false);
+  assert.equal(again.pending, true);
+  assert.equal(isTodo(toCard(issue({ labels: ['human:decide'] }))), true);
 });
