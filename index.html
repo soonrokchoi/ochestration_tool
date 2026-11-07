@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>할 일 인박스</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <div class="bar">
+        <h1>할 일 인박스</h1>
+        <button id="open-settings" type="button" class="ghost" aria-label="설정">설정</button>
+      </div>
+      <div class="bar sub">
+        <span id="repo-name" class="muted"></span>
+        <span id="counts" class="muted"></span>
+      </div>
+      <div class="bar">
+        <button id="refresh" type="button">새로고침</button>
+        <span id="updated" class="muted"></span>
+        <button id="flush" type="button" class="primary" disabled>지금 반영 (0)</button>
+      </div>
+    </header>
+
+    <main id="main"></main>
+
+    <dialog id="settings">
+      <form id="settings-form" method="dialog">
+        <h2>설정</h2>
+        <label>
+          개발 대상 저장소
+          <input id="set-repo" placeholder="owner/repo" autocomplete="off" />
+        </label>
+        <label>
+          GitHub fine-grained 토큰
+          <input id="set-token" type="password" autocomplete="off" />
+        </label>
+        <p class="muted small">
+          그 저장소 하나에만 Issues 읽기·쓰기, Contents 읽기·쓰기 권한을 준 토큰을 쓰세요. 토큰은 이 브라우저에만 저장됩니다.
+        </p>
+        <div class="row">
+          <button value="cancel" formnovalidate type="button" onclick="this.closest('dialog').close()">취소</button>
+          <button value="save" class="primary">저장</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div id="toast" role="status" hidden></div>
+
+    <script type="module" src="src/app.js"></script>
+  </body>
+</html>
