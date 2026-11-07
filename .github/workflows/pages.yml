@@ -33,9 +33,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Collect site files
-        run: |
-          mkdir _site
-          cp -r index.html styles.css src _site/
+        run: scripts/build-site.sh "${GITHUB_SHA::7}"
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
       - id: deployment
